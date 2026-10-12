@@ -1,0 +1,106 @@
+# SLO: 99.5% of podinfo HTTP requests succeed (non-5xx) over a rolling 30 days.
+# Error budget = 0.5%. Alerting follows the multiwindow, multi-burn-rate approach
+# from the Google SRE Workbook (chapter 5, "Alerting on SLOs").
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sre-kit-slo-podinfo
+  namespace: monitoring
+spec:
+  groups:
+    - name: sre-kit.slo.podinfo.recording
+      interval: 30s
+      rules:
+        - record: slo:podinfo_error_ratio:rate5m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[5m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[5m]))
+        - record: slo:podinfo_error_ratio:rate30m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[30m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[30m]))
+        - record: slo:podinfo_error_ratio:rate1h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[1h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[1h]))
+        - record: slo:podinfo_error_ratio:rate2h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[2h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[2h]))
+        - record: slo:podinfo_error_ratio:rate6h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[6h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[6h]))
+        - record: slo:podinfo_error_ratio:rate1d
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[1d]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[1d]))
+        - record: slo:podinfo_error_ratio:rate3d
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[3d]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[3d]))
+        - record: slo:podinfo_error_ratio:rate30d
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status=~"5.."}[30d]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo", namespace="sre-demo"}[30d]))
+        - record: slo:podinfo_error_budget_remaining:ratio30d
+          expr: |
+            1 - (slo:podinfo_error_ratio:rate30d / (1 - 0.995))
+
+    - name: sre-kit.slo.podinfo.alerts
+      rules:
+        # Page: 2% of the 30-day budget burned in 1h (14.4x) or 5% in 6h (6x).
+        - alert: PodinfoErrorBudgetBurnFast
+          expr: |
+            (
+              slo:podinfo_error_ratio:rate1h > (14.4 * 0.005)
+              and
+              slo:podinfo_error_ratio:rate5m > (14.4 * 0.005)
+            )
+            or
+            (
+              slo:podinfo_error_ratio:rate6h > (6 * 0.005)
+              and
+              slo:podinfo_error_ratio:rate30m > (6 * 0.005)
+            )
+          for: 2m
+          labels:
+            severity: critical
+            service: podinfo
+            slo: availability
+          annotations:
+            summary: "podinfo is burning its error budget fast"
+            description: "At this rate the 30-day error budget will be exhausted in under 5 days."
+            runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/slo-error-budget-burn.md
+
+        # Ticket: 10% of the budget burned in 1 day (3x) or 3 days (1x).
+        - alert: PodinfoErrorBudgetBurnSlow
+          expr: |
+            (
+              slo:podinfo_error_ratio:rate1d > (3 * 0.005)
+              and
+              slo:podinfo_error_ratio:rate2h > (3 * 0.005)
+            )
+            or
+            (
+              slo:podinfo_error_ratio:rate3d > (1 * 0.005)
+              and
+              slo:podinfo_error_ratio:rate6h > (1 * 0.005)
+            )
+          for: 15m
+          labels:
+            severity: warning
+            service: podinfo
+            slo: availability
+          annotations:
+            summary: "podinfo is slowly burning its error budget"
+            description: "Error rate is above the sustainable level. Investigate during working hours."
+            runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/slo-error-budget-burn.md

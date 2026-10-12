@@ -1,0 +1,79 @@
+rule_files:
+  - ../build/workloads.rules.yaml
+  - ../build/nodes.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: crash looping pod alerts after 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_waiting_reason{job="kube-state-metrics", namespace="shop", pod="api-7d9f", container="api", reason="CrashLoopBackOff"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PodCrashLooping
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: PodCrashLooping
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: kube-state-metrics
+              namespace: shop
+              pod: api-7d9f
+              container: api
+              reason: CrashLoopBackOff
+            exp_annotations:
+              summary: "shop/api-7d9f (api) is crash looping"
+              description: "Container api has been in CrashLoopBackOff for more than 15 minutes."
+              runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/pod-crashloopbackoff.md
+
+  - name: OOMKilled restart alerts immediately
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{job="kube-state-metrics", namespace="shop", pod="worker-1", container="worker"}'
+        values: '0 0 0 1 1 1 1'
+      - series: 'kube_pod_container_status_last_terminated_reason{job="kube-state-metrics", namespace="shop", pod="worker-1", container="worker", reason="OOMKilled"}'
+        values: '0 0 0 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ContainerOOMKilled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: kube-state-metrics
+              namespace: shop
+              pod: worker-1
+              container: worker
+            exp_annotations:
+              summary: "shop/worker-1 (worker) was OOMKilled"
+              description: "The container restarted after exceeding its memory limit in the last 15 minutes."
+              runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/pod-crashloopbackoff.md#oomkilled
+
+  - name: disk filling up is predicted before it is full
+    interval: 1m
+    input_series:
+      # 100 GB disk, 14 GB free, losing 50 MB per minute (~72 GB per day)
+      - series: 'node_filesystem_avail_bytes{job="node-exporter", instance="node-1", mountpoint="/", fstype="ext4", device="/dev/sda1"}'
+        values: '14000000000-50000000x60'
+      - series: 'node_filesystem_size_bytes{job="node-exporter", instance="node-1", mountpoint="/", fstype="ext4", device="/dev/sda1"}'
+        values: '100000000000x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: NodeDiskWillFillIn24h
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node-exporter
+              instance: node-1
+              mountpoint: /
+              fstype: ext4
+              device: /dev/sda1
+            exp_annotations:
+              summary: "node-1 / will fill up within 24 hours"
+              description: "Less than 15% free and the 6-hour trend reaches zero within a day."
+              runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/node-disk-pressure.md
+      - eval_time: 45m
+        alertname: NodeDiskAlmostFull
+        exp_alerts: []

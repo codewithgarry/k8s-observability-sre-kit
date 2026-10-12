@@ -1,0 +1,43 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sre-kit-workloads
+  namespace: monitoring
+spec:
+  groups:
+    - name: sre-kit.workloads
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            max_over_time(kube_pod_container_status_waiting_reason{job="kube-state-metrics", reason="CrashLoopBackOff"}[5m]) >= 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is crash looping"
+            description: "Container {{ $labels.container }} has been in CrashLoopBackOff for more than 15 minutes."
+            runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/pod-crashloopbackoff.md
+
+        - alert: ContainerOOMKilled
+          expr: |
+            increase(kube_pod_container_status_restarts_total{job="kube-state-metrics"}[15m]) > 0
+            and on (namespace, pod, container)
+            kube_pod_container_status_last_terminated_reason{job="kube-state-metrics", reason="OOMKilled"} == 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOMKilled"
+            description: "The container restarted after exceeding its memory limit in the last 15 minutes."
+            runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/pod-crashloopbackoff.md#oomkilled
+
+        - alert: DeploymentReplicasUnavailable
+          expr: |
+            kube_deployment_spec_replicas{job="kube-state-metrics"}
+              > kube_deployment_status_replicas_available{job="kube-state-metrics"}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} is missing replicas"
+            description: "Fewer replicas are available than desired for more than 15 minutes."
+            runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/pod-crashloopbackoff.md

@@ -1,0 +1,84 @@
+# promtool unit tests for the SLO burn-rate alerts.
+# Run: make test   (extracts rule groups from the PrometheusRule CRDs into build/)
+rule_files:
+  - ../build/slo-podinfo.rules.yaml
+
+evaluation_interval: 30s
+
+tests:
+  # 10% of requests fail -> 20x burn rate -> page. (The series starts failing at t=0, so the 1h
+  # window holds only bad data; with prior healthy traffic detection takes ~43 min, see slo/.)
+  - name: fast burn pages on-call
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="200"}'
+        values: '0+90x180'
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="500"}'
+        values: '0+10x180'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PodinfoErrorBudgetBurnFast
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: podinfo
+              slo: availability
+            exp_annotations:
+              summary: "podinfo is burning its error budget fast"
+              description: "At this rate the 30-day error budget will be exhausted in under 5 days."
+              runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/slo-error-budget-burn.md
+
+  # 0.2% of requests fail -> within budget (0.5%) -> no alerts at all.
+  - name: healthy service does not alert
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="200"}'
+        values: '0+998x180'
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="500"}'
+        values: '0+2x180'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: PodinfoErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: PodinfoErrorBudgetBurnSlow
+        exp_alerts: []
+
+  # 2% of requests fail -> 4x burn -> ticket, not a page.
+  - name: slow burn opens a ticket but does not page
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="200"}'
+        values: '0+98x240'
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="500"}'
+        values: '0+2x240'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: PodinfoErrorBudgetBurnFast
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: PodinfoErrorBudgetBurnSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: podinfo
+              slo: availability
+            exp_annotations:
+              summary: "podinfo is slowly burning its error budget"
+              description: "Error rate is above the sustainable level. Investigate during working hours."
+              runbook_url: https://github.com/codewithgarry/k8s-observability-sre-kit/blob/main/runbooks/slo-error-budget-burn.md
+
+  - name: error budget remaining is computed correctly
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="200"}'
+        values: '0+999x60'
+      - series: 'http_request_duration_seconds_count{job="podinfo", namespace="sre-demo", status="500"}'
+        values: '0+1x60'
+    promql_expr_test:
+      # 0.1% errors consumes 20% of a 0.5% budget -> 80% remaining
+      - expr: round(slo:podinfo_error_budget_remaining:ratio30d, 0.01)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{}'
+            value: 0.8
