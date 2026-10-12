@@ -43,4 +43,7 @@ jobs:
         run: make validate
 
       - name: Validate dashboard JSON
-        run: for f in dashboards/*.json; do jq empty "$f" && echo "ok: $f"; done
+        run: |
+          for f in dashboards/*.json; do
+            jq empty "$f" && echo "valid JSON: $f"
+          done
